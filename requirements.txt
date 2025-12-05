@@ -1,0 +1,12 @@
+langchain
+langchain-groq
+langchain-google-genai
+langgraph
+streamlit
+python-dotenv
+pydantic
+faiss-cpu
+numpy
+pandas
+sqlalchemy
+psycopg2-binary
