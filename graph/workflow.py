@@ -150,7 +150,31 @@ workflow.add_node("translation_output", translation_output_node)
 
 workflow.set_entry_point("translation_input")
 
-workflow.add_edge("translation_input", "router")
+# workflow.add_edge("translation_input", "router") # Removed unconditional edge
+
+def check_input_validity(state: AgentState):
+    """
+    Check if we should proceed to routing or end (due to guardrail/validation failure).
+    If validation failed, translation_input_node returned a "messages" update only (error msg),
+    and likely no new a2a_log entry or an empty one.
+    """
+    # If the last message is an AIMessage (error response from guardrails), we stop.
+    # Normal flow: translation_input returns a2a_log (TASK), but NOT a new AIMessage in 'messages' yet.
+    
+    last_msg = state['messages'][-1]
+    if isinstance(last_msg, AIMessage):
+        # This means an error message was generated directly in the input node
+        return "end"
+    return "continue"
+
+workflow.add_conditional_edges(
+    "translation_input",
+    check_input_validity,
+    {
+        "continue": "router",
+        "end": END
+    }
+)
 
 def route_decision(state):
     return state["next_agent"]

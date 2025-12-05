@@ -9,7 +9,7 @@ from guardrails.hub import ToxicLanguage, RestrictToTopic, DetectPII
 input_guard = Guard().use_many(
     ToxicLanguage(threshold=0.8, validation_method="sentence", on_fail="exception"),
     RestrictToTopic(
-        valid_topics=["travel", "flights", "hotels", "trains", "buses", "booking", "tourism", "transportation"],
+        valid_topics=["travel", "flights", "hotels", "trains", "buses", "booking", "tourism", "transportation", "greetings", "chat", "assistance"],
         invalid_topics=["politics", "religion", "hate speech", "illegal activities"],
         on_fail="fix"
     ),
@@ -32,6 +32,14 @@ def validate_user_input(text: str, check_pii: bool = False) -> dict:
         dict with 'valid' (bool), 'cleaned_text' (str), 'issues' (list)
     """
     try:
+        # 1. Bypass validation for short greetings (common conversational inputs)
+        if len(text.strip().split()) <= 2:
+            return {
+                "valid": True,
+                "cleaned_text": text,
+                "issues": []
+            }
+
         # Basic input validation
         result = input_guard.validate(text)
         cleaned_text = result.validated_output if hasattr(result, 'validated_output') else text
