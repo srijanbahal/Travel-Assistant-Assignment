@@ -10,8 +10,15 @@ from agents.a2a_schema import A2AMessage
 tools = [search_flights, search_hotels, search_trains, search_buses]
 llm = get_llm()
 
+from datetime import datetime
+
 prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful travel assistant. Use the provided tools to search for flights, hotels, trains, and buses. "
+    ("system", "You are a helpful travel assistant. Today is {current_date}. "
+               "Use the provided tools to search for flights, hotels, trains, and buses. "
+               "REQUIRED PARAMETERS:\n"
+               "- Flights/Trains/Buses: Origin, Destination, Date\n"
+               "- Hotels: Location, Check-in Date\n\n"
+               "If any required parameter is missing, DO NOT call a tool. Instead, ask the user specifically for the missing information. "
                "When you find results, summarize them clearly for the user. "
                "If no results are found, suggest alternatives or ask for more details. "
                "Always include prices and key details."),
@@ -24,9 +31,11 @@ agent = create_tool_calling_agent(llm, tools, prompt)
 travel_agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, return_intermediate_steps=True)
 
 def run_travel_agent(input_msg: A2AMessage, chat_history: list) -> A2AMessage:
+    current_date = datetime.now().strftime("%Y-%m-%d")
     response = travel_agent_executor.invoke({
         "input": input_msg.content,
-        "chat_history": chat_history
+        "chat_history": chat_history,
+        "current_date": current_date
     })
     output_content = response['output']
     
