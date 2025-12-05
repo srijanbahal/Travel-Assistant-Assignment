@@ -88,10 +88,15 @@ def travel_agent_node(state: AgentState):
     last_results = response_msg.context.get("search_results", [])
     search_type = response_msg.context.get("search_type", "unknown")
     
+    # Context Switching: If we performed a new search, clear any previous booking progress
+    # But keep session_id!
+    new_booking_context = {"session_id": state.get("booking_context", {}).get("session_id")}
+    
     return {
         "a2a_log": [response_msg],
         "last_search_results": last_results,
-        "search_context": search_type
+        "search_context": search_type,
+        "booking_context": new_booking_context # Resets booking state
     }
 
 def booking_agent_node(state: AgentState):
@@ -99,8 +104,20 @@ def booking_agent_node(state: AgentState):
     Invokes the Booking Agent.
     """
     last_a2a = state['a2a_log'][-1]
-    response_msg = handle_booking(state.get("booking_context", {}), last_a2a)
-    return {"a2a_log": [response_msg]}
+    # Pass the full state (which contains last_search_results)
+    response_msg = handle_booking(state, last_a2a)
+    
+    # Check if agent updated the booking context (e.g. selected an item)
+    updated_context = response_msg.context.get("updated_booking_context", {})
+    
+    # Merge with existing context if present
+    current_context = state.get("booking_context", {})
+    current_context.update(updated_context) # This modifies the dict
+    
+    return {
+        "a2a_log": [response_msg],
+        "booking_context": current_context
+    }
 
 def translation_output_node(state: AgentState):
     """
