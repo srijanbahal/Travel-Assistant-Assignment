@@ -21,7 +21,7 @@ prompt = ChatPromptTemplate.from_messages([
 ])
 
 agent = create_tool_calling_agent(llm, tools, prompt)
-travel_agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+travel_agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, return_intermediate_steps=True)
 
 def run_travel_agent(input_msg: A2AMessage, chat_history: list) -> A2AMessage:
     response = travel_agent_executor.invoke({
@@ -30,6 +30,28 @@ def run_travel_agent(input_msg: A2AMessage, chat_history: list) -> A2AMessage:
     })
     output_content = response['output']
     
+    # Extract search results from intermediate steps
+    search_results = []
+    search_type = "unknown"
+    
+    if 'intermediate_steps' in response:
+        for action, observation in response['intermediate_steps']:
+            # observation is the output of the tool (usually a list of dicts or string)
+            if isinstance(observation, list):
+                search_results.extend(observation)
+                # Infer type from tool name
+                if "flight" in action.tool:
+                    search_type = "flight"
+                elif "hotel" in action.tool:
+                    search_type = "hotel"
+                elif "train" in action.tool:
+                    search_type = "train"
+                elif "bus" in action.tool:
+                    search_type = "bus"
+            elif isinstance(observation, str) and "[" in observation:
+                # Try to parse stringified list if needed, or skip
+                pass
+
     # Handle list content (e.g. from Gemini/LangChain update)
     if isinstance(output_content, list):
         text_parts = []
@@ -45,5 +67,8 @@ def run_travel_agent(input_msg: A2AMessage, chat_history: list) -> A2AMessage:
         receiver="TranslationAgent",
         message_type="RESPONSE",
         content=str(output_content),
-        context={}
+        context={
+            "search_results": search_results,
+            "search_type": search_type
+        }
     )

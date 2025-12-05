@@ -11,3 +11,5 @@ class AgentState(TypedDict):
     user_language: str
     next_agent: str
     booking_context: Dict[str, Any]
+    last_search_results: List[Dict[str, Any]] # Phase 2: Context Tracking
+    search_context: str # flight, hotel, train, bus

@@ -7,6 +7,7 @@ from agents.booking_agent import handle_booking
 from agents.a2a_schema import A2AMessage
 from data.chat_repo import save_chat_message
 from validation.input_guards import validate_user_input, validate_message_length
+from validation.output_guards import validate_agent_output
 import streamlit as st # Access session state for ID
 
 # --- Nodes ---
@@ -72,7 +73,26 @@ def travel_agent_node(state: AgentState):
     chat_history = state['messages'][:-1]
     
     response_msg = run_travel_agent(last_a2a, chat_history)
-    return {"a2a_log": [response_msg]}
+    
+    # GUARDRAILS: Validate Output
+    # (Optional: Pass search results in context if we had them available here)
+    validation_result = validate_agent_output(response_msg.content)
+    
+    if not validation_result['valid']:
+        # If toxic or hallucinated, replace with safe message
+        safe_response = "I apologize, but I couldn't verify the results. Please try searching again."
+        response_msg.content = safe_response
+        
+    # Phase 2: Context Tracking
+    # Extract search context from message
+    last_results = response_msg.context.get("search_results", [])
+    search_type = response_msg.context.get("search_type", "unknown")
+    
+    return {
+        "a2a_log": [response_msg],
+        "last_search_results": last_results,
+        "search_context": search_type
+    }
 
 def booking_agent_node(state: AgentState):
     """
