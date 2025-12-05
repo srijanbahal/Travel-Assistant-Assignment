@@ -77,6 +77,12 @@ with st.sidebar:
 st.title("🌍 AI Travel Companion")
 st.markdown("Ask me anything in your native language!")
 
+# Initialize Context State
+if "last_search_results" not in st.session_state:
+    st.session_state.last_search_results = []
+if "search_context" not in st.session_state:
+    st.session_state.search_context = "unknown"
+
 # Initialize Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -93,6 +99,9 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+        if msg.get("role") == "assistant" and "original_english" in msg:
+             with st.expander("Show English Translation"):
+                st.markdown(msg["original_english"])
 
 # Chat Input
 if prompt := st.chat_input("Type your message here..."):
@@ -116,18 +125,33 @@ if prompt := st.chat_input("Type your message here..."):
                 "messages": history,
                 "user_language": "English",
                 "booking_context": {"session_id": st.session_state.session_id},
+                "last_search_results": st.session_state.last_search_results,
+                "search_context": st.session_state.search_context,
                 "a2a_log": []
             }
             result = app_graph.invoke(inputs)
+            
+            # Update Context from Result
+            st.session_state.last_search_results = result.get("last_search_results", [])
+            st.session_state.search_context = result.get("search_context", "unknown")
             
             # Get the last message (Response)
             last_msg = result["messages"][-1]
             response = last_msg.content
             
             # Add assistant message to state
-            st.session_state.messages.append({"role": "assistant", "content": response})
+            # Store metadata if available
+            msg_data = {"role": "assistant", "content": response}
+            if "original_english" in last_msg.additional_kwargs:
+                msg_data["original_english"] = last_msg.additional_kwargs["original_english"]
+            
+            st.session_state.messages.append(msg_data)
+            
             with st.chat_message("assistant"):
                 st.markdown(response)
+                if "original_english" in msg_data:
+                    with st.expander("Show English Translation"):
+                        st.markdown(msg_data["original_english"])
                 
         except Exception as e:
             st.error(f"An error occurred: {e}")

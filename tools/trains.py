@@ -18,6 +18,22 @@ def search_trains(origin: str, destination: str, date: Optional[str] = None) -> 
             query = query.filter(Train.date == date)
             
         trains = query.all()
+
+        # Fuzzy Search Logic
+        if not trains and date:
+            try:
+                from datetime import datetime, timedelta
+                target_date = datetime.strptime(date, "%Y-%m-%d")
+                start_date = (target_date - timedelta(days=2)).strftime("%Y-%m-%d")
+                end_date = (target_date + timedelta(days=2)).strftime("%Y-%m-%d")
+                
+                trains = db.query(Train).filter(
+                    Train.origin.ilike(origin),
+                    Train.destination.ilike(destination),
+                    Train.date.between(start_date, end_date)
+                ).all()
+            except ValueError:
+                pass
         
         results = []
         for train in trains:
@@ -32,7 +48,8 @@ def search_trains(origin: str, destination: str, date: Optional[str] = None) -> 
                 "arrival": train.arrival,
                 "price": train.price,
                 "class": train.train_class,
-                "currency": train.currency
+                "currency": train.currency,
+                "note": "Alternative date found" if date and train.date != date else "Exact match"
             })
         return results
     finally:
@@ -54,6 +71,22 @@ def search_buses(origin: str, destination: str, date: Optional[str] = None) -> L
             query = query.filter(Bus.date == date)
             
         buses = query.all()
+
+        # Fuzzy Search Logic
+        if not buses and date:
+            try:
+                from datetime import datetime, timedelta
+                target_date = datetime.strptime(date, "%Y-%m-%d")
+                start_date = (target_date - timedelta(days=2)).strftime("%Y-%m-%d")
+                end_date = (target_date + timedelta(days=2)).strftime("%Y-%m-%d")
+                
+                buses = db.query(Bus).filter(
+                    Bus.origin.ilike(origin),
+                    Bus.destination.ilike(destination),
+                    Bus.date.between(start_date, end_date)
+                ).all()
+            except ValueError:
+                pass
         
         results = []
         for bus in buses:
@@ -67,7 +100,8 @@ def search_buses(origin: str, destination: str, date: Optional[str] = None) -> L
                 "arrival": bus.arrival,
                 "price": bus.price,
                 "type": bus.bus_type,
-                "currency": bus.currency
+                "currency": bus.currency,
+                "note": "Alternative date found" if date and bus.date != date else "Exact match"
             })
         return results
     finally:

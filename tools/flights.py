@@ -20,6 +20,23 @@ def search_flights(origin: str, destination: str, date: Optional[str] = None) ->
             
         flights = query.all()
         
+        # Fuzzy Search Logic: if no results and date provided, search +/- 2 days
+        if not flights and date:
+            try:
+                from datetime import datetime, timedelta
+                target_date = datetime.strptime(date, "%Y-%m-%d")
+                start_date = (target_date - timedelta(days=2)).strftime("%Y-%m-%d")
+                end_date = (target_date + timedelta(days=2)).strftime("%Y-%m-%d")
+                
+                # New query for range
+                flights = db.query(Flight).filter(
+                    Flight.origin.ilike(origin),
+                    Flight.destination.ilike(destination),
+                    Flight.date.between(start_date, end_date)
+                ).all()
+            except ValueError:
+                pass # Invalid date format, just return empty
+        
         results = []
         for flight in flights:
             results.append({
@@ -32,7 +49,8 @@ def search_flights(origin: str, destination: str, date: Optional[str] = None) ->
                 "departure": flight.departure,
                 "arrival": flight.arrival,
                 "price": flight.price,
-                "currency": flight.currency
+                "currency": flight.currency,
+                "note": "Alternative date found" if date and flight.date != date else "Exact match"
             })
         return results
     finally:

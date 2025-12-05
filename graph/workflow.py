@@ -133,9 +133,10 @@ def translation_output_node(state: AgentState):
     save_chat_message(session_id, "assistant", translated_msg.content)
     
     # Update LangChain history for the UI
+    # We embed the original English text in additional_kwargs so the UI can optionally display it
     return {
         "a2a_log": [translated_msg],
-        "messages": [AIMessage(content=translated_msg.content)]
+        "messages": [AIMessage(content=translated_msg.content, additional_kwargs={"original_english": last_a2a.content})]
     }
 
 # --- Graph Construction ---

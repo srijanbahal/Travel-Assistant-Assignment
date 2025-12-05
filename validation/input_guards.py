@@ -8,11 +8,12 @@ from guardrails.hub import ToxicLanguage, RestrictToTopic, DetectPII
 # Input validation guard
 input_guard = Guard().use_many(
     ToxicLanguage(threshold=0.8, validation_method="sentence", on_fail="exception"),
-    RestrictToTopic(
-        valid_topics=["travel", "flights", "hotels", "trains", "buses", "booking", "tourism", "transportation", "greetings", "chat", "assistance"],
-        invalid_topics=["politics", "religion", "hate speech", "illegal activities"],
-        on_fail="fix"
-    ),
+    # RestrictToTopic is too aggressive for now, disabling to unblock valid queries
+    # RestrictToTopic(
+    #     valid_topics=["travel", "flights", "hotels", "trains", "buses", "booking", "tourism", "transportation", "greetings", "chat", "assistance"],
+    #     invalid_topics=["politics", "religion", "hate speech", "illegal activities"],
+    #     on_fail="fix"
+    # ),
 )
 
 # PII detection guard (optional - can be enabled for compliance)
