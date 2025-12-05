@@ -60,6 +60,15 @@ class Bus(Base):
     bus_type = Column(String) # 'type' is reserved
     currency = Column(String)
 
+class ChatHistory(Base):
+    __tablename__ = "chat_history"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    session_id = Column(String, index=True)
+    sender = Column(String)
+    message = Column(String)
+    timestamp = Column(String) # ISO format
+
+
 def get_db():
     db = SessionLocal()
     try:

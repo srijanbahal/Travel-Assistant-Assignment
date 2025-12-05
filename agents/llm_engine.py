@@ -12,7 +12,7 @@ def get_llm(model_type="flash"):
     # Prioritize Gemini Flash if available
     if model_type == "flash" and google_api_key:
         try:
-            return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+            return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
         except Exception as e:
             print(f"Error initializing Gemini: {e}")
             pass

@@ -1,6 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from agents.llm_engine import get_llm
+from agents.a2a_schema import A2AMessage
 
 llm = get_llm()
 
@@ -31,11 +32,10 @@ translate_response_prompt = ChatPromptTemplate.from_template(
     """
 )
 
-def translate_to_english(text):
+def translate_to_english(text) -> A2AMessage:
     chain = detect_translate_prompt | llm | StrOutputParser()
     result = chain.invoke({"input": text})
     
-    # Simple parsing (robustness can be improved)
     lines = result.strip().split('\n')
     detected_lang = "English"
     translation = text
@@ -46,10 +46,25 @@ def translate_to_english(text):
         elif line.startswith("Translation:"):
             translation = line.replace("Translation:", "").strip()
             
-    return detected_lang, translation
+    return A2AMessage(
+        sender="TranslationAgent",
+        receiver="Router",
+        message_type="TASK",
+        content=translation,
+        context={"detected_language": detected_lang}
+    )
 
-def translate_to_user_lang(text, language):
+def translate_to_user_lang(text, language) -> A2AMessage:
     if language.lower() == "english":
-        return text
-    chain = translate_response_prompt | llm | StrOutputParser()
-    return chain.invoke({"text": text, "language": language})
+        translated_text = text
+    else:
+        chain = translate_response_prompt | llm | StrOutputParser()
+        translated_text = chain.invoke({"text": text, "language": language})
+        
+    return A2AMessage(
+        sender="TranslationAgent",
+        receiver="User",
+        message_type="RESPONSE",
+        content=translated_text,
+        context={"target_language": language}
+    )

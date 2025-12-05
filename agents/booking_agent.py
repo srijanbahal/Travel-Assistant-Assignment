@@ -1,6 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from agents.llm_engine import get_llm
+from agents.a2a_schema import A2AMessage
 
 llm = get_llm()
 
@@ -24,13 +25,20 @@ booking_prompt = ChatPromptTemplate.from_template(
     """
 )
 
-def handle_booking(state, user_input):
-    # This is a simplified handler. In a real graph, we'd manage state more explicitly.
-    # For now, we'll let the LLM generate the next question or confirmation.
+def handle_booking(state, user_input_msg: A2AMessage) -> A2AMessage:
+    user_input = user_input_msg.content
+    
     chain = booking_prompt | llm | StrOutputParser()
     response = chain.invoke({
         "item": state.get("booking_item", "Unknown"),
         "details": state.get("user_details", "None"),
         "input": user_input
     })
-    return response
+    
+    return A2AMessage(
+        sender="BookingAgent",
+        receiver="TranslationAgent",
+        message_type="RESPONSE",
+        content=response,
+        context={"booking_status": "in_progress"} # Simplified context update
+    )

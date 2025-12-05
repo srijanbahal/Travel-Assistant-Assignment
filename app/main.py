@@ -7,16 +7,19 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from graph.workflow import app_graph
 from langchain_core.messages import HumanMessage, AIMessage
-from dotenv import load_dotenv
 from data.init_db import init_db
+from data.chat_repo import get_chat_history
+import uuid
 
-load_dotenv()
-
-# Initialize Database
+# Initialize DB
 try:
     init_db()
 except Exception as e:
-    print(f"Database initialization skipped/failed (might be running without DB): {e}")
+    print(f"DB Init Error: {e}")
+
+# Session ID
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
 
 st.set_page_config(page_title="Travel Assistant", page_icon="🌍", layout="wide")
 
@@ -77,6 +80,14 @@ st.markdown("Ask me anything in your native language!")
 # Initialize Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = []
+    # Load from DB
+    try:
+        history = get_chat_history(st.session_state.session_id)
+        for msg in history:
+            role = "user" if msg.sender == "user" else "assistant"
+            st.session_state.messages.append({"role": role, "content": msg.message})
+    except Exception as e:
+        print(f"Error loading history: {e}")
 
 # Display Chat History
 for msg in st.session_state.messages:
@@ -101,7 +112,12 @@ if prompt := st.chat_input("Type your message here..."):
                     history.append(AIMessage(content=m["content"]))
             
             # Invoke Graph
-            inputs = {"messages": history}
+            inputs = {
+                "messages": history,
+                "user_language": "English",
+                "booking_context": {"session_id": st.session_state.session_id},
+                "a2a_log": []
+            }
             result = app_graph.invoke(inputs)
             
             # Get the last message (Response)
