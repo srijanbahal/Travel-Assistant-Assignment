@@ -201,7 +201,7 @@ def handle_booking(state: Dict[str, Any], user_input_msg: A2AMessage) -> A2AMess
     # Handle based on current stage
     if current_stage is None or current_stage == "complete":
         # Starting new booking - user should be selecting an item
-        return _handle_selection(intent_result, search_results, search_type, booking_context)
+        return _handle_selection(intent_result, search_results, search_type, booking_context, user_input)
     elif current_stage == "confirm":
         return _handle_confirm_stage(intent_result, booking_context)
     elif current_stage == "details":
@@ -222,7 +222,8 @@ def _handle_selection(
     intent: IntentResult, 
     results: List[Dict], 
     search_type: str, 
-    booking_context: Dict
+    booking_context: Dict,
+    user_input: str = ""
 ) -> A2AMessage:
     """Handle item selection from search results."""
     
@@ -237,6 +238,7 @@ def _handle_selection(
     
     selected_item = None
     
+    # 1. Check by item_index from intent
     if intent.intent == BookingIntent.SELECT_ITEM and intent.item_index:
         idx = intent.item_index
         if idx == -1:  # Cheapest
@@ -252,7 +254,11 @@ def _handle_selection(
         elif 1 <= idx <= len(results):
             selected_item = results[idx - 1]
     
-    # If no specific selection but user confirmed, take first item
+    # 2. Try to match by flight/train number or name if no selection yet
+    if not selected_item and user_input:
+        selected_item = _resolve_by_identifier(user_input, results, search_type)
+    
+    # 3. If no specific selection but user confirmed, take first item
     if not selected_item and intent.intent == BookingIntent.CONFIRM and results:
         selected_item = results[0]
     
@@ -276,6 +282,61 @@ def _handle_selection(
             content="I couldn't identify which item you want to book. Please specify (e.g., 'book the first one' or 'book the cheapest').",
             context={"updated_booking_context": booking_context, "booking_stage": None}
         )
+
+
+def _resolve_by_identifier(user_input: str, results: List[Dict], search_type: str) -> Optional[Dict]:
+    """
+    Resolve item by flight number, train number, airline name, hotel name, or operator.
+    
+    Examples:
+    - "book Vistara-AI-223" -> matches flight with flight_number containing "AI-223" or airline "Vistara"
+    - "book Shatabdi Express" -> matches train with that name
+    - "book Radisson Blu" -> matches hotel with that name
+    """
+    if not results or not user_input:
+        return None
+    
+    user_lower = user_input.lower()
+    user_normalized = re.sub(r'[\s\-]', '', user_lower)  # Remove spaces and hyphens for matching
+    
+    for item in results:
+        # Flight number matching (e.g., "6E-223", "AI123", "UK955")
+        flight_num = item.get('flight_number', '')
+        if flight_num:
+            flight_normalized = re.sub(r'[\s\-]', '', flight_num.lower())
+            if flight_normalized and (flight_normalized in user_normalized or user_normalized in flight_normalized):
+                return item
+        
+        # Train number matching
+        train_num = item.get('train_number', '')
+        if train_num:
+            if train_num.lower() in user_lower or train_num in user_input:
+                return item
+        
+        # Airline name matching
+        airline = item.get('airline', '')
+        if airline and airline.lower() in user_lower:
+            return item
+        
+        # Train/Hotel name matching
+        name = item.get('name', '')
+        if name:
+            name_lower = name.lower()
+            # Check if user mentioned at least 2 words from the name
+            name_words = name_lower.split()
+            matches = sum(1 for w in name_words if w in user_lower)
+            if matches >= min(2, len(name_words)):
+                return item
+            # Or if the full name is mentioned
+            if name_lower in user_lower:
+                return item
+        
+        # Operator matching (for buses)
+        operator = item.get('operator', '')
+        if operator and operator.lower() in user_lower:
+            return item
+    
+    return None
 
 
 def _handle_confirm_stage(intent: IntentResult, booking_context: Dict) -> A2AMessage:

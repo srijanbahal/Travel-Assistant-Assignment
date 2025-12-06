@@ -1,17 +1,26 @@
+# Core LangChain
 langchain>=0.1.0
 langchain-community>=0.0.10
 langchain-core>=0.1.0
 langchain-groq
 langchain-google-genai
 langgraph
+
+# Web Framework
 streamlit
+fastapi
+uvicorn[standard]
+websockets
+
+# Utilities
 python-dotenv
 pydantic
-faiss-cpu
 numpy
 pandas
-sqlalchemy
-psycopg2-binary
-psycopg2
-guardrails-ai
 dateparser
+
+# Database
+sqlalchemy
+
+# Note: psycopg2 removed - using SQLite for cloud deployment
+# If you need PostgreSQL locally, install: pip install psycopg2-binary

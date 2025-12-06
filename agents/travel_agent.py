@@ -13,9 +13,10 @@ from tools.recommendations import get_attractions, get_restaurants, get_cultural
 from agents.llm_engine import get_llm
 from agents.a2a_schema import A2AMessage
 from agents.logger import log_tool_call, log_llm_call, log_error
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Tuple
 import json
+import re
 
 # All available tools
 TOOLS = [
@@ -32,39 +33,31 @@ TOOLS = [
 # System prompt for the travel agent
 SYSTEM_PROMPT = """You are a helpful travel assistant. Today is {current_date}.
 
-CAPABILITIES:
-1. Flight Search - search_flights(origin, destination, date) or search_next_available_flight(origin, destination)
-2. Hotel Search - search_hotels(location)
-3. Train Search - search_trains(origin, destination, date)
-4. Bus Search - search_buses(origin, destination, date)
-5. Attractions - get_attractions(location)
-6. Restaurants - get_restaurants(location)
-7. Cultural Tips - get_cultural_tips(location)
+AVAILABLE TOOLS (only use when needed for NEW searches):
+1. search_flights(origin, destination, date) - Search flights. date is optional.
+2. search_next_available_flight(origin, destination, after_date) - Find next available flights
+3. search_hotels(location) - Search hotels in a city
+4. search_trains(origin, destination, date) - Search trains. date is optional.
+5. search_buses(origin, destination, date) - Search buses. date is optional.
+6. get_attractions(location) - Get tourist attractions
+7. get_restaurants(location) - Get restaurant recommendations
+8. get_cultural_tips(location) - Get travel tips
 
-CONTEXT FROM PREVIOUS SEARCHES:
+CURRENT SEARCH RESULTS (from previous query):
 {context_summary}
 
-CONVERSATION HISTORY:
-{history_summary}
-
 CRITICAL RULES:
-1. ALWAYS use tools when the user asks for travel information
-2. If a required parameter is missing, ASK for it (don't guess)
-3. For dates like "tomorrow", "next week" - calculate the actual date
-4. If no results found, suggest alternatives (nearby dates, different transport)
-5. Format results clearly with prices, times, and key details
-6. End responses with a helpful follow-up question
-7. If user references previous results ("the first one", "cheapest"), use the CONTEXT above
-
-DATE HANDLING:
-- "tomorrow" = {tomorrow_date}
-- "day after tomorrow" = {day_after_date}
-- "next week" = approximately {next_week_date}
+1. If user asks about EXISTING results shown above (e.g., "which has a pool?", "tell me more about the first one"), 
+   DO NOT call any tools - just answer from the context above!
+2. Only call tools when user wants a NEW search (new destination, different dates, etc.)
+3. For dates like "tomorrow" use {tomorrow_date}, "day after tomorrow" use {day_after_date}
+4. If user references previous results ("the first one", "cheapest", "which one has X"), use CONTEXT above
+5. Be helpful and conversational
 
 RESPONSE FORMAT:
-- Use markdown formatting (bold, bullets)
+- Use markdown formatting (bold for names, bullets for lists)
 - Include all relevant details (prices, times, ratings)
-- Be concise but complete"""
+- End with a helpful follow-up question"""
 
 
 def run_travel_agent(
@@ -74,87 +67,83 @@ def run_travel_agent(
 ) -> A2AMessage:
     """
     Process a travel-related query using LLM with tool calling.
-    
-    Args:
-        input_msg: The translated user message
-        chat_history: Previous conversation messages
-        context: Current state including last_search_results
-        
-    Returns:
-        A2AMessage with response and any search results
     """
     context = context or {}
     current_date = datetime.now()
     
-    # Build context summary for the LLM
+    # Build context summary
     context_summary = _build_context_summary(context)
-    history_summary = _build_history_summary(chat_history[-6:] if chat_history else [])
     
     # Calculate date references
-    tomorrow = (current_date + __import__('datetime').timedelta(days=1)).strftime("%Y-%m-%d")
-    day_after = (current_date + __import__('datetime').timedelta(days=2)).strftime("%Y-%m-%d")
-    next_week = (current_date + __import__('datetime').timedelta(days=7)).strftime("%Y-%m-%d")
+    tomorrow = (current_date + timedelta(days=1)).strftime("%Y-%m-%d")
+    day_after = (current_date + timedelta(days=2)).strftime("%Y-%m-%d")
     
     # Format system prompt
     system_content = SYSTEM_PROMPT.format(
         current_date=current_date.strftime("%Y-%m-%d"),
         context_summary=context_summary,
-        history_summary=history_summary,
         tomorrow_date=tomorrow,
         day_after_date=day_after,
-        next_week_date=next_week
     )
     
+    user_query = input_msg.content
+    existing_results = context.get("last_search_results", [])
+    
+    # Check if this is a follow-up question about existing results
+    if existing_results and _is_followup_question(user_query):
+        # Answer directly without calling tools
+        return _handle_followup_question(user_query, existing_results, context)
+    
     try:
-        # Get LLM with tools bound
         llm = get_llm()
-        llm_with_tools = llm.bind_tools(TOOLS)
         
-        log_llm_call("travel_agent", input_msg.content)
-        
-        # Invoke the LLM
-        messages = [
-            SystemMessage(content=system_content),
-            HumanMessage(content=input_msg.content)
-        ]
-        
-        response = llm_with_tools.invoke(messages)
-        
-        # Process tool calls if any
-        search_results = []
-        search_type = "unknown"
-        
-        if response.tool_calls:
-            search_results, search_type, tool_output = _execute_tool_calls(response.tool_calls)
+        # Try with tool calling
+        try:
+            llm_with_tools = llm.bind_tools(TOOLS)
+            log_llm_call("travel_agent_with_tools", user_query)
             
-            # If we got results, ask LLM to format them nicely
-            if search_results:
-                formatted_response = _format_results_with_llm(
-                    input_msg.content, 
-                    search_results, 
-                    search_type,
-                    llm
+            messages = [
+                SystemMessage(content=system_content),
+                HumanMessage(content=user_query)
+            ]
+            
+            response = llm_with_tools.invoke(messages)
+            
+            # Process tool calls if any
+            if response.tool_calls:
+                search_results, search_type, tool_output = _execute_tool_calls(response.tool_calls)
+                
+                if search_results:
+                    formatted_response = _format_results_as_text(search_results, search_type)
+                    formatted_response += "\n\nWould you like to book any of these or see more options?"
+                else:
+                    formatted_response = tool_output or "I couldn't find any results. Would you like to try different dates or locations?"
+                
+                return A2AMessage(
+                    sender="TravelAgent",
+                    receiver="TranslationAgent",
+                    message_type="RESPONSE",
+                    content=formatted_response,
+                    context={"search_results": search_results, "search_type": search_type}
                 )
             else:
-                formatted_response = tool_output or "I couldn't find any results. Would you like to try different dates or locations?"
-        else:
-            # No tool calls - LLM responded directly
-            formatted_response = response.content if response.content else "I need more details. Where would you like to travel?"
-        
-        # Ensure response is a string
-        if isinstance(formatted_response, list):
-            formatted_response = _extract_text_from_response(formatted_response)
-        
-        return A2AMessage(
-            sender="TravelAgent",
-            receiver="TranslationAgent",
-            message_type="RESPONSE",
-            content=str(formatted_response),
-            context={
-                "search_results": search_results,
-                "search_type": search_type
-            }
-        )
+                # No tool calls - LLM responded directly
+                response_text = response.content if response.content else "How can I help you with your travel plans?"
+                if isinstance(response_text, list):
+                    response_text = _extract_text_from_response(response_text)
+                
+                return A2AMessage(
+                    sender="TravelAgent",
+                    receiver="TranslationAgent",
+                    message_type="RESPONSE",
+                    content=str(response_text),
+                    context={"search_results": [], "search_type": "unknown"}
+                )
+                
+        except Exception as tool_error:
+            log_error("TravelAgent", f"Tool calling failed: {tool_error}")
+            # Fall back to non-tool response
+            return _handle_without_tools(user_query, context, llm, system_content)
         
     except Exception as e:
         log_error("TravelAgent", f"Error: {str(e)}")
@@ -162,27 +151,139 @@ def run_travel_agent(
             sender="TravelAgent",
             receiver="TranslationAgent",
             message_type="RESPONSE",
-            content="I apologize, I'm having trouble processing your request. Could you please rephrase or try again?",
+            content="I apologize, I'm having trouble processing your request. Could you please try again?",
             context={"search_results": [], "search_type": "unknown", "error": str(e)}
         )
 
 
-def _execute_tool_calls(tool_calls: List) -> Tuple[List[Dict], str, str]:
-    """
-    Execute tool calls and return aggregated results.
+def _is_followup_question(query: str) -> bool:
+    """Check if this is a follow-up question about existing results."""
+    query_lower = query.lower()
     
-    Returns:
-        Tuple of (results_list, search_type, raw_output_string)
-    """
+    followup_patterns = [
+        "which one", "which has", "tell me more", "more about",
+        "the first", "the second", "the third", "what about",
+        "compare", "difference between", "vs", "or the",
+        "has a pool", "has wifi", "has breakfast", "near",
+        "how much", "how far", "rating", "reviews",
+        "amenities", "facilities", "features"
+    ]
+    
+    return any(pattern in query_lower for pattern in followup_patterns)
+
+
+def _handle_followup_question(query: str, results: List[Dict], context: Dict) -> A2AMessage:
+    """Handle follow-up questions about existing search results."""
+    search_type = context.get("search_context", "unknown")
+    query_lower = query.lower()
+    
+    # Build response based on the question
+    response = ""
+    
+    # Check for specific attribute questions
+    if "pool" in query_lower:
+        matches = [r for r in results if "pool" in str(r.get("amenities", "")).lower()]
+        if matches:
+            response = "Here are the options with a pool:\n\n"
+            for i, item in enumerate(matches, 1):
+                response += f"**{i}. {item.get('name', 'Unknown')}** - ₹{item.get('price_per_night', item.get('price', 'N/A'))}/night\n"
+        else:
+            response = "None of the current results show a pool in their amenities. Would you like me to search for hotels with pools specifically?"
+    
+    elif "wifi" in query_lower:
+        matches = [r for r in results if "wifi" in str(r.get("amenities", "")).lower()]
+        if matches:
+            response = "These options have WiFi:\n\n"
+            for i, item in enumerate(matches, 1):
+                response += f"**{i}. {item.get('name', 'Unknown')}**\n"
+        else:
+            response = "WiFi availability isn't shown for these hotels. Most hotels typically do offer WiFi."
+    
+    elif "cheapest" in query_lower or "lowest" in query_lower:
+        try:
+            cheapest = min(results, key=lambda x: float(x.get('price', x.get('price_per_night', float('inf')))))
+            response = f"The cheapest option is **{cheapest.get('name', cheapest.get('airline', 'Unknown'))}** at ₹{cheapest.get('price', cheapest.get('price_per_night', 'N/A'))}.\n\nWould you like to book it?"
+        except:
+            response = "I couldn't determine the cheapest option. Here are all the prices:\n\n"
+            for r in results:
+                response += f"- {r.get('name', r.get('airline', 'Unknown'))}: ₹{r.get('price', r.get('price_per_night', 'N/A'))}\n"
+    
+    elif any(x in query_lower for x in ["first", "second", "third", "1st", "2nd", "3rd"]):
+        # Get specific item
+        ordinals = {"first": 0, "1st": 0, "second": 1, "2nd": 1, "third": 2, "3rd": 2}
+        idx = 0
+        for word, i in ordinals.items():
+            if word in query_lower:
+                idx = i
+                break
+        
+        if idx < len(results):
+            item = results[idx]
+            response = f"Here are the details for option {idx + 1}:\n\n"
+            response += _format_single_item(item, search_type)
+            response += "\n\nWould you like to book this?"
+        else:
+            response = f"I only have {len(results)} results. Please choose from 1 to {len(results)}."
+    
+    else:
+        # General follow-up - show summary
+        response = "Based on the current results:\n\n"
+        for i, item in enumerate(results[:5], 1):
+            name = item.get('name', item.get('airline', item.get('operator', 'Unknown')))
+            price = item.get('price', item.get('price_per_night', 'N/A'))
+            response += f"{i}. **{name}** - ₹{price}\n"
+        response += "\nWhat would you like to know about these options?"
+    
+    return A2AMessage(
+        sender="TravelAgent",
+        receiver="TranslationAgent",
+        message_type="RESPONSE",
+        content=response,
+        context={"search_results": results, "search_type": search_type}
+    )
+
+
+def _handle_without_tools(query: str, context: Dict, llm, system_content: str) -> A2AMessage:
+    """Handle query without tool calling (fallback)."""
+    try:
+        messages = [
+            SystemMessage(content=system_content + "\n\nNOTE: Answer based on your knowledge. Do not attempt to use any tools."),
+            HumanMessage(content=query)
+        ]
+        
+        response = llm.invoke(messages)
+        response_text = response.content if response.content else "I need more details to help you. Where would you like to travel?"
+        
+        return A2AMessage(
+            sender="TravelAgent",
+            receiver="TranslationAgent",
+            message_type="RESPONSE",
+            content=str(response_text),
+            context={"search_results": [], "search_type": "unknown"}
+        )
+    except Exception as e:
+        return A2AMessage(
+            sender="TravelAgent",
+            receiver="TranslationAgent",
+            message_type="RESPONSE",
+            content="How can I help you with your travel plans today?",
+            context={"search_results": [], "search_type": "unknown"}
+        )
+
+
+def _execute_tool_calls(tool_calls: List) -> Tuple[List[Dict], str, str]:
+    """Execute tool calls and return results."""
     all_results = []
     search_type = "unknown"
     output_parts = []
     
     for tool_call in tool_calls:
-        tool_name = tool_call["name"]
-        tool_args = tool_call["args"]
+        tool_name = tool_call.get("name", "")
+        tool_args = tool_call.get("args", {})
         
-        # Find and execute the tool
+        # Clean up args - remove any null/None values
+        tool_args = {k: v for k, v in tool_args.items() if v is not None and v != "null"}
+        
         tool_func = _get_tool_by_name(tool_name)
         if tool_func:
             try:
@@ -191,7 +292,6 @@ def _execute_tool_calls(tool_calls: List) -> Tuple[List[Dict], str, str]:
                 
                 if isinstance(result, list):
                     all_results.extend(result)
-                    # Determine search type
                     if "flight" in tool_name:
                         search_type = "flight"
                     elif "hotel" in tool_name:
@@ -200,20 +300,20 @@ def _execute_tool_calls(tool_calls: List) -> Tuple[List[Dict], str, str]:
                         search_type = "train"
                     elif "bus" in tool_name:
                         search_type = "bus"
-                    elif "attraction" in tool_name or "restaurant" in tool_name or "tip" in tool_name:
+                    else:
                         search_type = "recommendation"
                 elif isinstance(result, str):
                     output_parts.append(result)
                     
             except Exception as e:
                 log_error("TravelAgent", f"Tool {tool_name} failed: {str(e)}")
-                output_parts.append(f"Error searching: {str(e)}")
+                output_parts.append(f"Couldn't complete the search: {str(e)}")
     
     return all_results, search_type, "\n".join(output_parts)
 
 
 def _get_tool_by_name(name: str):
-    """Get a tool function by its name."""
+    """Get a tool function by name."""
     for tool in TOOLS:
         if tool.name == name:
             return tool
@@ -221,19 +321,22 @@ def _get_tool_by_name(name: str):
 
 
 def _build_context_summary(context: Dict[str, Any]) -> str:
-    """Build a summary of the current context for the LLM."""
+    """Build summary of current context."""
     results = context.get("last_search_results", [])
     search_type = context.get("search_context", "unknown")
     
     if not results:
         return "No previous search results."
     
-    summary = f"Previous search: {len(results)} {search_type}(s) found:\n"
+    summary = f"Found {len(results)} {search_type}(s):\n"
     for i, item in enumerate(results[:5], 1):
         if search_type == "flight":
             summary += f"{i}. {item.get('airline', '')} {item.get('flight_number', '')} - ₹{item.get('price', 'N/A')}\n"
         elif search_type == "hotel":
-            summary += f"{i}. {item.get('name', '')} - ₹{item.get('price_per_night', 'N/A')}/night\n"
+            amenities = item.get('amenities', [])
+            if isinstance(amenities, list):
+                amenities = ", ".join(amenities[:3])
+            summary += f"{i}. {item.get('name', '')} - ₹{item.get('price_per_night', 'N/A')}/night - Amenities: {amenities}\n"
         elif search_type == "train":
             summary += f"{i}. {item.get('name', '')} ({item.get('train_number', '')}) - ₹{item.get('price', 'N/A')}\n"
         elif search_type == "bus":
@@ -244,52 +347,45 @@ def _build_context_summary(context: Dict[str, Any]) -> str:
     return summary
 
 
-def _build_history_summary(history: List) -> str:
-    """Build a summary of recent conversation history."""
-    if not history:
-        return "This is the start of the conversation."
-    
-    summary = []
-    for msg in history[-4:]:  # Last 4 messages
-        role = "User" if isinstance(msg, HumanMessage) else "Assistant"
-        content = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
-        summary.append(f"{role}: {content}")
-    
-    return "\n".join(summary)
-
-
-def _format_results_with_llm(query: str, results: List[Dict], result_type: str, llm) -> str:
-    """Use LLM to format search results into a nice response."""
-    if not results:
-        return "No results found."
-    
-    # Create a structured representation of results
-    results_text = _format_results_as_text(results, result_type)
-    
-    prompt = f"""Format these {result_type} search results into a helpful, conversational response.
-
-User asked: "{query}"
-
-Results:
-{results_text}
-
-Requirements:
-- Be conversational and helpful
-- Include all key details (prices, times, ratings)
-- Use markdown formatting (bold, bullets)
-- End with a helpful follow-up question about booking or more options
-- Keep it concise but informative"""
-
-    try:
-        response = llm.invoke([HumanMessage(content=prompt)])
-        return response.content if response.content else results_text
-    except:
-        return results_text  # Fallback to plain formatting
+def _format_single_item(item: Dict, item_type: str) -> str:
+    """Format a single item with all details."""
+    if item_type == "hotel" or "price_per_night" in item:
+        amenities = item.get('amenities', [])
+        if isinstance(amenities, list):
+            amenities = ", ".join(amenities)
+        return (
+            f"**{item.get('name', 'Unknown')}**\n"
+            f"📍 Location: {item.get('location', '')}\n"
+            f"⭐ Rating: {item.get('rating', 'N/A')}\n"
+            f"💰 Price: ₹{item.get('price_per_night', 'N/A')}/night\n"
+            f"🛎️ Amenities: {amenities}"
+        )
+    elif item_type == "flight" or "flight_number" in item:
+        return (
+            f"**{item.get('airline', 'Unknown')} {item.get('flight_number', '')}**\n"
+            f"✈️ Route: {item.get('origin', '')} → {item.get('destination', '')}\n"
+            f"📅 Date: {item.get('date', '')}\n"
+            f"🕐 Time: {item.get('departure', '')} - {item.get('arrival', '')}\n"
+            f"💰 Price: ₹{item.get('price', 'N/A')}"
+        )
+    elif item_type == "train" or "train_number" in item:
+        return (
+            f"**{item.get('name', 'Unknown')} ({item.get('train_number', '')})**\n"
+            f"🚆 Route: {item.get('origin', '')} → {item.get('destination', '')}\n"
+            f"📅 Date: {item.get('date', '')}\n"
+            f"🎫 Class: {item.get('class', item.get('train_class', ''))}\n"
+            f"💰 Price: ₹{item.get('price', 'N/A')}"
+        )
+    else:
+        return str(item)
 
 
 def _format_results_as_text(results: List[Dict], result_type: str) -> str:
-    """Format results into plain text."""
-    output = []
+    """Format results into text."""
+    if not results:
+        return "No results found."
+    
+    output = [f"Found {len(results)} {result_type}(s):\n"]
     
     for i, item in enumerate(results[:10], 1):
         if result_type == "flight":
@@ -297,7 +393,7 @@ def _format_results_as_text(results: List[Dict], result_type: str) -> str:
                 f"{i}. **{item.get('airline', 'Unknown')} {item.get('flight_number', '')}**\n"
                 f"   {item.get('origin', '')} → {item.get('destination', '')}\n"
                 f"   Date: {item.get('date', '')} | {item.get('departure', '')} - {item.get('arrival', '')}\n"
-                f"   Price: ₹{item.get('price', 'N/A')}"
+                f"   💰 ₹{item.get('price', 'N/A')}\n"
             )
         elif result_type == "hotel":
             amenities = item.get('amenities', [])
@@ -305,33 +401,32 @@ def _format_results_as_text(results: List[Dict], result_type: str) -> str:
                 amenities = ", ".join(amenities[:3])
             output.append(
                 f"{i}. **{item.get('name', 'Unknown')}**\n"
-                f"   📍 {item.get('location', '')}\n"
-                f"   ⭐ Rating: {item.get('rating', 'N/A')}\n"
+                f"   📍 {item.get('location', '')} | ⭐ {item.get('rating', 'N/A')}\n"
                 f"   💰 ₹{item.get('price_per_night', 'N/A')}/night\n"
-                f"   Amenities: {amenities}"
+                f"   Amenities: {amenities}\n"
             )
         elif result_type == "train":
             output.append(
                 f"{i}. **{item.get('name', 'Unknown')} ({item.get('train_number', '')})**\n"
                 f"   {item.get('origin', '')} → {item.get('destination', '')}\n"
                 f"   Date: {item.get('date', '')} | Class: {item.get('class', item.get('train_class', ''))}\n"
-                f"   Price: ₹{item.get('price', 'N/A')}"
+                f"   💰 ₹{item.get('price', 'N/A')}\n"
             )
         elif result_type == "bus":
             output.append(
                 f"{i}. **{item.get('operator', 'Unknown')}**\n"
                 f"   {item.get('origin', '')} → {item.get('destination', '')}\n"
                 f"   Date: {item.get('date', '')} | Type: {item.get('type', item.get('bus_type', ''))}\n"
-                f"   Price: ₹{item.get('price', 'N/A')}"
+                f"   💰 ₹{item.get('price', 'N/A')}\n"
             )
         else:
-            output.append(f"{i}. {json.dumps(item)}")
+            output.append(f"{i}. {json.dumps(item)}\n")
     
-    return "\n\n".join(output)
+    return "\n".join(output)
 
 
 def _extract_text_from_response(content) -> str:
-    """Extract text from various LLM response formats."""
+    """Extract text from LLM response."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
