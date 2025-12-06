@@ -21,6 +21,7 @@ dateparser
 
 # Database
 sqlalchemy
+gaurdrails
 
 # Note: psycopg2 removed - using SQLite for cloud deployment
 # If you need PostgreSQL locally, install: pip install psycopg2-binary
