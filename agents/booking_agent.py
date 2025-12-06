@@ -189,15 +189,29 @@ def _parse_json_response(text: str) -> Dict[str, Any]:
     text = text.strip()
     
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        return parsed
     except json.JSONDecodeError:
+        # Try to find JSON within text
         match = re.search(r'\{.*\}', text, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group())
+                parsed = json.loads(match.group())
+                return parsed
             except:
                 pass
-        return {"action": "unclear", "response": text}
+        
+        # If we can find a "response" field in the text, extract it
+        response_match = re.search(r'"response"\s*:\s*"([^"]+)"', text)
+        if response_match:
+            return {"action": "unclear", "response": response_match.group(1)}
+        
+        # Last resort: clean the JSON artifacts and return as response
+        clean_text = re.sub(r'\{[^}]*\}', '', text).strip()
+        if clean_text:
+            return {"action": "unclear", "response": clean_text}
+        
+        return {"action": "unclear", "response": "I'm not sure what you'd like to do. Could you clarify?"}
 
 
 def _handle_selection(decision: Dict, memory: ConversationMemory) -> BookingAgentResponse:

@@ -176,8 +176,17 @@ def _parse_json_response(text: str) -> Dict[str, Any]:
             except:
                 pass
         
-        # Fallback: return as direct response
-        return {"action": "respond", "response": text}
+        # If we can find a "response" field in the text, extract it
+        response_match = re.search(r'"response"\s*:\s*"([^"]+)"', text)
+        if response_match:
+            return {"action": "respond", "response": response_match.group(1)}
+        
+        # Clean JSON artifacts and return as response
+        clean_text = re.sub(r'\{[^}]*\}', '', text).strip()
+        if clean_text:
+            return {"action": "respond", "response": clean_text}
+        
+        return {"action": "respond", "response": "How can I help with your travel plans?"}
 
 
 def _execute_search(decision: Dict, memory: ConversationMemory) -> TravelAgentResponse:
