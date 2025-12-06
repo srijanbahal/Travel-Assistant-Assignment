@@ -117,9 +117,10 @@ AVAILABLE ACTIONS:
 RULES:
 1. For "cheapest"/"lowest price" - select the item with lowest price
 2. For "first one"/"second one" - select by position (1-indexed)
-3. For confirmations ("yes", "ok", "proceed") - move to next stage
-4. Extract any provided details (name, email, phone, card digits)
-5. Be helpful and guide user through the process
+3. For confirmations ("yes", "ok", "proceed", "book it") - move to next stage
+4. For rejections ("no", "don't book", "cancel", "stop", "wait") - use action "cancel"
+5. Extract any provided details (name, email, phone, card digits)
+6. Be helpful and guide user through the process
 
 Respond with JSON only:
 {{"action": "select", "item_index": 1, "extracted_details": {{}}, "response": "..."}}
