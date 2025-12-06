@@ -2,11 +2,15 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Menu, Moon, Sun } from "lucide-react";
+import { Menu, Moon, Sun, PlusCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 
-export function Header() {
+interface HeaderProps {
+  onNewChat?: () => void;
+}
+
+export function Header({ onNewChat }: HeaderProps) {
   const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {
@@ -85,20 +89,30 @@ export function Header() {
         </nav>
 
         {/* Actions */}
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleTheme}
-            className="h-9 w-9"
-          >
+        <div className="flex items-center gap-4">
+          {onNewChat && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={onNewChat}
+              className="hidden md:flex gap-2"
+            >
+              <PlusCircle className="h-4 w-4" />
+              New Chat
+            </Button>
+          )}
+
+          <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-full">
             {isDark ? (
-              <Sun className="h-4 w-4" />
+              <Sun className="h-5 w-5 text-yellow-500 transition-all" />
             ) : (
-              <Moon className="h-4 w-4" />
+              <Moon className="h-5 w-5 text-gray-700 transition-all" />
             )}
+            <span className="sr-only">Toggle theme</span>
           </Button>
-          <Button variant="ghost" size="icon" className="md:hidden h-9 w-9">
+
+          {/* Mobile Menu */}
+          <Button variant="ghost" size="icon" className="md:hidden">
             <Menu className="h-5 w-5" />
           </Button>
         </div>

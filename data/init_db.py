@@ -23,8 +23,8 @@ def generate_schedule(days=45):
             if origin != dest:
                 routes.append((origin, dest))
     
-    # Select a subset of active routes to keep DB size manageable
-    active_routes = random.sample(routes, 40) 
+    # Use ALL routes to ensure full coverage (no random sampling)
+    active_routes = routes  # All 90 routes 
 
     current_id = 1
     

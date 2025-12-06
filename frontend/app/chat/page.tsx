@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChatMessage, TypingIndicator, ChatInput } from "@/components/chat";
-import { SearchResults, PaymentFlow } from "@/components/booking";
+import { SearchResults, PaymentFlow, BookingForm, type BookingFormData } from "@/components/booking";
 import { Header } from "@/components/layout";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
@@ -32,7 +32,7 @@ export default function ChatPage() {
   const [bookingStage, setBookingStage] = useState<BookingStage>(null);
   const [bookingContext, setBookingContext] = useState<BookingContext>({});
   const [userLanguage, setUserLanguage] = useState("English");
-  const [sessionId] = useState(() => generateSessionId());
+  const [sessionId, setSessionId] = useState(() => generateSessionId());
   
   const wsRef = useRef<ChatWebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -208,9 +208,42 @@ export default function ChatPage() {
     handleSendMessage("I want to book another trip");
   };
 
+  const handleNewChat = () => {
+    // Generate new session ID
+    const newSessionId = generateSessionId();
+    setSessionId(newSessionId);
+    
+    // Reset all state
+    setMessages([
+      {
+        id: "welcome",
+        role: "assistant",
+        content: "👋 Welcome to InviGrid Travel Assistant!\n\nI can help you search for flights, hotels, trains, and buses. Try asking:\n• \"Find flights from Delhi to Mumbai\"\n• \"Search hotels in Goa\"\n• \"Book a train to Chennai\"",
+        timestamp: new Date(),
+      },
+    ]);
+    setBookingStage(null);
+    setBookingContext({});
+    setSearchResults([]);
+    setSearchContext("unknown");
+    setUserLanguage("English");
+    
+    // Note: WebSocket will automatically reconnect due to useEffect dependency on sessionId
+  };
+
+  const handleBookingFormSubmit = (data: BookingFormData) => {
+    // Format the data as a message to send to the backend
+    if (bookingStage === "details") {
+      const detailsMessage = `Name: ${data.name}, Email: ${data.email}, Phone: ${data.phone}`;
+      handleSendMessage(detailsMessage);
+    } else if (bookingStage === "payment") {
+      handleSendMessage(data.cardDigits || "");
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen bg-background">
-      <Header />
+      <Header onNewChat={handleNewChat} />
       
       <div className="flex-1 flex overflow-hidden">
         {/* Main Chat Area */}
@@ -236,8 +269,20 @@ export default function ChatPage() {
                 />
               )}
               
-              {/* Payment Flow */}
-              {bookingStage && (
+              {/* Booking Form for details/payment stages */}
+              {(bookingStage === "details" || bookingStage === "payment") && (
+                <div className="px-4 py-3">
+                  <BookingForm
+                    stage={bookingStage}
+                    selectedItem={bookingContext.selected_item}
+                    onSubmit={handleBookingFormSubmit}
+                    isLoading={isTyping}
+                  />
+                </div>
+              )}
+
+              {/* Payment Flow Progress (for confirm stage and complete) */}
+              {(bookingStage === "confirm" || bookingStage === "complete") && (
                 <PaymentFlow 
                   stage={bookingStage}
                   context={bookingContext}
@@ -252,17 +297,14 @@ export default function ChatPage() {
             </div>
           </ScrollArea>
 
-          <ChatInput 
-            onSend={handleSendMessage}
-            disabled={isTyping}
-            placeholder={
-              bookingStage === "payment" 
-                ? "Enter last 4 digits of your card..." 
-                : bookingStage === "details"
-                ? "Enter your name, email, and phone..."
-                : "Type your message..."
-            }
-          />
+          {/* Hide chat input when booking form is shown */}
+          {bookingStage !== "details" && bookingStage !== "payment" && (
+            <ChatInput 
+              onSend={handleSendMessage}
+              disabled={isTyping}
+              placeholder="Type your message..."
+            />
+          )}
         </div>
       </div>
       

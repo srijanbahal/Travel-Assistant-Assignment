@@ -2,7 +2,7 @@
 Multi-Lingual Travel Assistant - Streamlit UI
 
 Main entry point for the web application.
-Handles user input, invokes the LangGraph workflow, and displays results.
+Uses centralized memory management for reliable context handling.
 """
 import streamlit as st
 import os
@@ -13,10 +13,14 @@ from typing import Dict, Any, List
 # Add root directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from graph.workflow import app_graph
-from langchain_core.messages import HumanMessage, AIMessage
+# Import our modules
+from agents.memory import get_memory, clear_memory
+from agents.translation_agent import translate_input, translate_output
+from agents.router import classify_intent
+from agents.travel_agent import run_travel_agent
+from agents.booking_agent import run_booking_agent
 from data.init_db import init_db
-from data.chat_repo import get_chat_history
+from data.chat_repo import save_chat_message
 
 # Initialize Database
 try:
@@ -102,20 +106,6 @@ st.markdown("""
         transform: scale(1.05);
         box-shadow: 0 5px 20px rgba(255,107,107,0.4);
     }
-    
-    .stTextInput input {
-        border-radius: 25px;
-        background: rgba(255,255,255,0.1);
-        border: 1px solid rgba(255,255,255,0.2);
-    }
-    
-    .dataframe {
-        background: rgba(30, 33, 48, 0.9) !important;
-        border-radius: 10px;
-    }
-    .dataframe th {
-        background: rgba(255,107,107,0.2) !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -131,10 +121,13 @@ with st.sidebar:
     st.markdown("- 🗣️ Multi-lingual Support")
     st.markdown("---")
     
+    # Get memory for sidebar display
+    memory = get_memory(st.session_state.session_id)
+    
     # Show booking status if active
-    if st.session_state.get("booking_stage"):
+    if memory.booking_state.get("stage"):
         st.markdown("### 🎫 Booking Progress")
-        stage = st.session_state.booking_stage
+        stage = memory.booking_state.get("stage")
         stages = {
             "confirm": "1️⃣ Confirming...", 
             "details": "2️⃣ Collecting Details", 
@@ -144,45 +137,24 @@ with st.sidebar:
         st.caption(stages.get(stage, stage))
     
     # Show search context
-    if st.session_state.get("last_search_results"):
+    if memory.search_results:
         st.markdown("### 🔍 Last Search")
-        st.caption(f"{len(st.session_state.last_search_results)} {st.session_state.get('search_context', 'items')}(s) found")
+        st.caption(f"{len(memory.search_results)} {memory.search_type}(s) found")
     
     st.markdown("---")
     if st.button("🗑️ Clear Conversation"):
-        # Clear all session state
-        for key in list(st.session_state.keys()):
-            if key != "session_id":
-                del st.session_state[key]
+        clear_memory(st.session_state.session_id)
         st.session_state.session_id = str(uuid.uuid4())
+        st.session_state.messages = []
         st.rerun()
 
 # Main Title
 st.title("🌍 AI Travel Companion")
 st.markdown("*Ask me anything in your native language!*")
 
-# Initialize session state
-defaults = {
-    "messages": [],
-    "last_search_results": [],
-    "search_context": "unknown",
-    "booking_context": {"session_id": st.session_state.session_id},
-    "booking_stage": None,
-    "user_language": "English"
-}
-for key, default in defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
-
-# Load chat history from DB on first load
-if not st.session_state.messages:
-    try:
-        history = get_chat_history(st.session_state.session_id)
-        for msg in history:
-            role = "user" if msg.sender == "user" else "assistant"
-            st.session_state.messages.append({"role": role, "content": msg.message})
-    except Exception as e:
-        print(f"Error loading history: {e}")
+# Initialize session state for messages display
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 
 def render_search_results(results: List[Dict], search_type: str):
@@ -196,57 +168,49 @@ def render_search_results(results: List[Dict], search_type: str):
     
     if search_type == "flight":
         df_data = []
-        for i, flight in enumerate(results, 1):
+        for i, flight in enumerate(results[:5], 1):
             df_data.append({
                 "#": i,
-                "✈️ Airline": flight.get('airline', 'N/A'),
-                "Flight": flight.get('flight_number', ''),
+                "Airline": flight.get("airline", ""),
+                "Flight": flight.get("flight_number", ""),
                 "Route": f"{flight.get('origin', '')} → {flight.get('destination', '')}",
-                "Date": flight.get('date', ''),
                 "Time": f"{flight.get('departure', '')} - {flight.get('arrival', '')}",
-                "💰 Price": f"₹{flight.get('price', 'N/A')}",
+                "Price": f"₹{flight.get('price', 'N/A')}"
             })
         df = pd.DataFrame(df_data)
-        
     elif search_type == "hotel":
         df_data = []
-        for i, hotel in enumerate(results, 1):
-            amenities = hotel.get('amenities', [])
-            if isinstance(amenities, list):
-                amenities = ", ".join(amenities[:2])
+        for i, hotel in enumerate(results[:5], 1):
             df_data.append({
                 "#": i,
-                "🏨 Hotel": hotel.get('name', 'N/A'),
-                "📍 Location": hotel.get('location', ''),
-                "⭐ Rating": hotel.get('rating', 'N/A'),
-                "💰 Price/Night": f"₹{hotel.get('price_per_night', 'N/A')}",
-                "Amenities": amenities,
+                "Hotel": hotel.get("name", ""),
+                "Location": hotel.get("location", ""),
+                "Rating": f"⭐ {hotel.get('rating', 'N/A')}",
+                "Price": f"₹{hotel.get('price_per_night', 'N/A')}/night"
             })
         df = pd.DataFrame(df_data)
-        
     elif search_type == "train":
         df_data = []
-        for i, train in enumerate(results, 1):
+        for i, train in enumerate(results[:5], 1):
             df_data.append({
                 "#": i,
-                "🚆 Train": f"{train.get('name', 'N/A')} ({train.get('train_number', '')})",
+                "Train": train.get("name", ""),
+                "Number": train.get("train_number", ""),
                 "Route": f"{train.get('origin', '')} → {train.get('destination', '')}",
-                "Date": train.get('date', ''),
-                "Class": train.get('class', train.get('train_class', '')),
-                "💰 Price": f"₹{train.get('price', 'N/A')}",
+                "Time": f"{train.get('departure', '')} - {train.get('arrival', '')}",
+                "Price": f"₹{train.get('price', 'N/A')}"
             })
         df = pd.DataFrame(df_data)
-        
     elif search_type == "bus":
         df_data = []
-        for i, bus in enumerate(results, 1):
+        for i, bus in enumerate(results[:5], 1):
             df_data.append({
                 "#": i,
-                "🚌 Operator": bus.get('operator', 'N/A'),
+                "Operator": bus.get("operator", ""),
+                "Type": bus.get("type", bus.get("bus_type", "")),
                 "Route": f"{bus.get('origin', '')} → {bus.get('destination', '')}",
-                "Date": bus.get('date', ''),
-                "Type": bus.get('type', bus.get('bus_type', '')),
-                "💰 Price": f"₹{bus.get('price', 'N/A')}",
+                "Time": bus.get("departure", ""),
+                "Price": f"₹{bus.get('price', 'N/A')}"
             })
         df = pd.DataFrame(df_data)
     else:
@@ -256,11 +220,11 @@ def render_search_results(results: List[Dict], search_type: str):
     st.caption("💡 Say 'book the first one' or 'book the cheapest' to book!")
 
 
-def render_booking_confirmation(booking_context: Dict):
+def render_booking_confirmation(booking_state: Dict):
     """Render booking confirmation card."""
-    conf_id = booking_context.get("confirmation_id", "N/A")
-    item = booking_context.get("selected_item", {})
-    details = booking_context.get("user_details", {})
+    conf_id = booking_state.get("confirmation_id", "N/A")
+    item = booking_state.get("selected_item", {})
+    details = booking_state.get("user_details", {})
     
     st.markdown(f"""
     <div class="booking-confirmed">
@@ -272,29 +236,82 @@ def render_booking_confirmation(booking_context: Dict):
         <p><strong>Phone:</strong> {details.get('phone', 'N/A')}</p>
         <hr style="border-color: rgba(255,255,255,0.3)">
         <p>✈️ {item.get('airline', item.get('name', 'N/A'))} | {item.get('origin', '')} → {item.get('destination', '')}</p>
-        <p>📅 {item.get('date', '')} | 💳 Card ****{booking_context.get('card_last4', 'XXXX')}</p>
+        <p>📅 {item.get('date', '')} | 💳 Card ****{booking_state.get('card_last4', 'XXXX')}</p>
     </div>
     """, unsafe_allow_html=True)
     
     if st.button("🎉 Book Another Trip"):
-        st.session_state.booking_context = {"session_id": st.session_state.session_id}
-        st.session_state.booking_stage = None
-        st.session_state.last_search_results = []
+        clear_memory(st.session_state.session_id)
+        st.session_state.messages = []
         st.rerun()
+
+
+def handle_chat(user_message: str) -> Dict[str, Any]:
+    """Process a chat message using the new architecture."""
+    session_id = st.session_state.session_id
+    memory = get_memory(session_id)
+    
+    # 1. Translate input
+    english_text, is_valid = translate_input(user_message, memory)
+    
+    if not is_valid:
+        return {
+            "response": english_text,
+            "english_response": english_text,
+            "search_results": memory.search_results,
+            "search_type": memory.search_type,
+            "booking_state": memory.booking_state
+        }
+    
+    # 2. Route to appropriate agent
+    intent = classify_intent(english_text, memory)
+    
+    # 3. Execute agent
+    if intent == "booking":
+        result = run_booking_agent(english_text, memory)
+        memory.update_booking_state(result.booking_state)
+        response_text = result.response
+    else:
+        result = run_travel_agent(english_text, memory)
+        if result.search_results:
+            memory.update_search_results(result.search_results, result.search_type)
+        response_text = result.response
+    
+    # 4. Translate output
+    translated_response = translate_output(response_text, memory)
+    
+    # 5. Update message history
+    memory.add_message("user", user_message)
+    memory.add_message("assistant", translated_response)
+    
+    # Save to database
+    try:
+        save_chat_message(session_id, "user", user_message)
+        save_chat_message(session_id, "assistant", translated_response)
+    except Exception as e:
+        print(f"Failed to save messages: {e}")
+    
+    return {
+        "response": translated_response,
+        "english_response": response_text if memory.user_language != "English" else None,
+        "search_results": memory.search_results,
+        "search_type": memory.search_type,
+        "booking_state": memory.booking_state
+    }
 
 
 # Display Chat History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        # Show English translation toggle if available
-        if msg.get("role") == "assistant" and "original_english" in msg:
+        if msg.get("role") == "assistant" and msg.get("english_response"):
             with st.expander("🌐 Show English Translation"):
-                st.markdown(msg["original_english"])
+                st.markdown(msg["english_response"])
 
 # Check if booking just completed
-if st.session_state.booking_stage == "complete" and st.session_state.booking_context.get("confirmation_id"):
-    render_booking_confirmation(st.session_state.booking_context)
+memory = get_memory(st.session_state.session_id)
+if memory.booking_state.get("stage") == "complete" and memory.booking_state.get("confirmation_id"):
+    render_booking_confirmation(memory.booking_state)
 
 # Chat Input
 if prompt := st.chat_input("Type your message here... (Try: 'Show me flights from Mumbai to Delhi')"):
@@ -305,65 +322,30 @@ if prompt := st.chat_input("Type your message here... (Try: 'Show me flights fro
 
     with st.spinner("✨ Thinking..."):
         try:
-            # Build LangChain message history (last 10 messages)
-            history = []
-            for m in st.session_state.messages[-10:]:
-                if m["role"] == "user":
-                    history.append(HumanMessage(content=m["content"]))
-                else:
-                    history.append(AIMessage(content=m["content"]))
-            
-            # Prepare graph inputs with FULL context
-            inputs = {
-                "messages": history,
-                "user_language": st.session_state.user_language,
-                "booking_context": st.session_state.booking_context,
-                "last_search_results": st.session_state.last_search_results,
-                "search_context": st.session_state.search_context,
-                "booking_stage": st.session_state.booking_stage,
-                "a2a_log": [],
-                "next_agent": "travel_agent",
-            }
-            
-            # Invoke the graph
-            result = app_graph.invoke(inputs)
-            
-            # Update ALL state from result
-            # Only update search results if we got new ones
-            new_results = result.get("last_search_results", [])
-            if new_results:
-                st.session_state.last_search_results = new_results
-            
-            st.session_state.search_context = result.get("search_context", st.session_state.search_context)
-            st.session_state.booking_context = result.get("booking_context", st.session_state.booking_context)
-            st.session_state.booking_stage = result.get("booking_stage")
-            st.session_state.user_language = result.get("user_language", st.session_state.user_language)
-            
-            # Get the response
-            last_msg = result["messages"][-1]
-            response = last_msg.content
+            result = handle_chat(prompt)
             
             # Store message with metadata
-            msg_data = {"role": "assistant", "content": response}
-            if hasattr(last_msg, 'additional_kwargs') and "original_english" in last_msg.additional_kwargs:
-                msg_data["original_english"] = last_msg.additional_kwargs["original_english"]
-            
+            msg_data = {
+                "role": "assistant", 
+                "content": result["response"],
+                "english_response": result.get("english_response")
+            }
             st.session_state.messages.append(msg_data)
             
             # Display response
             with st.chat_message("assistant"):
-                st.markdown(response)
-                if "original_english" in msg_data:
+                st.markdown(result["response"])
+                if result.get("english_response"):
                     with st.expander("🌐 Show English Translation"):
-                        st.markdown(msg_data["original_english"])
+                        st.markdown(result["english_response"])
             
             # Auto-display results if this was a search
-            if new_results:
-                render_search_results(new_results, st.session_state.search_context)
+            if result["search_results"] and result.get("search_type") != memory.search_type:
+                render_search_results(result["search_results"], result["search_type"])
             
             # Check for booking completion
-            if st.session_state.booking_stage == "complete":
-                render_booking_confirmation(st.session_state.booking_context)
+            if result["booking_state"].get("stage") == "complete":
+                render_booking_confirmation(result["booking_state"])
                 
         except Exception as e:
             st.error(f"⚠️ An error occurred: {e}")

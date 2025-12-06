@@ -124,13 +124,11 @@ export function PaymentFlow({ stage, context, onNewBooking }: PaymentFlowProps) 
           )}
         </AnimatePresence>
 
-        {/* Current Stage Info */}
-        {stage !== "complete" && (
+        {/* Current Stage Info - only for confirm stage */}
+        {stage === "confirm" && (
           <div className="text-center">
             <p className="text-sm text-muted-foreground">
-              {stage === "confirm" && "Please confirm your selection"}
-              {stage === "details" && "Enter your passenger details"}
-              {stage === "payment" && "Complete your payment"}
+              Please confirm your selection to proceed
             </p>
           </div>
         )}

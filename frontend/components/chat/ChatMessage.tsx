@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Languages, Bot, User } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/avatar";
@@ -56,9 +57,23 @@ export function ChatMessage({ message, showEnglishToggle = true }: ChatMessagePr
             ? "bg-primary text-primary-foreground rounded-tr-sm" 
             : "bg-card border border-border rounded-tl-sm"
         )}>
-          <p className="text-sm whitespace-pre-wrap leading-relaxed">
-            {displayContent}
-          </p>
+          <div className="text-sm leading-relaxed prose prose-sm prose-invert max-w-none">
+            <ReactMarkdown
+              components={{
+                // Style markdown elements
+                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                strong: ({ children }) => <strong className="font-bold text-primary">{children}</strong>,
+                ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+                ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+                li: ({ children }) => <li className="text-sm">{children}</li>,
+                h1: ({ children }) => <h1 className="text-lg font-bold mb-2">{children}</h1>,
+                h2: ({ children }) => <h2 className="text-base font-bold mb-2">{children}</h2>,
+                h3: ({ children }) => <h3 className="text-sm font-bold mb-1">{children}</h3>,
+              }}
+            >
+              {displayContent}
+            </ReactMarkdown>
+          </div>
         </div>
 
         {/* Actions Row */}
