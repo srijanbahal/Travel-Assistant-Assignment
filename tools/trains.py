@@ -10,8 +10,8 @@ def search_trains(origin: str, destination: str, date: Optional[str] = None) -> 
     db = next(get_db())
     try:
         query = db.query(Train).filter(
-            Train.origin.ilike(origin),
-            Train.destination.ilike(destination)
+            Train.origin.ilike(f"%{origin}%"),
+            Train.destination.ilike(f"%{destination}%")
         )
         
         if date:
@@ -28,8 +28,8 @@ def search_trains(origin: str, destination: str, date: Optional[str] = None) -> 
                 end_date = (target_date + timedelta(days=2)).strftime("%Y-%m-%d")
                 
                 trains = db.query(Train).filter(
-                    Train.origin.ilike(origin),
-                    Train.destination.ilike(destination),
+                    Train.origin.ilike(f"%{origin}%"),
+                    Train.destination.ilike(f"%{destination}%"),
                     Train.date.between(start_date, end_date)
                 ).all()
             except ValueError:
@@ -63,8 +63,8 @@ def search_buses(origin: str, destination: str, date: Optional[str] = None) -> L
     db = next(get_db())
     try:
         query = db.query(Bus).filter(
-            Bus.origin.ilike(origin),
-            Bus.destination.ilike(destination)
+            Bus.origin.ilike(f"%{origin}%"),
+            Bus.destination.ilike(f"%{destination}%")
         )
         
         if date:
@@ -81,8 +81,8 @@ def search_buses(origin: str, destination: str, date: Optional[str] = None) -> L
                 end_date = (target_date + timedelta(days=2)).strftime("%Y-%m-%d")
                 
                 buses = db.query(Bus).filter(
-                    Bus.origin.ilike(origin),
-                    Bus.destination.ilike(destination),
+                    Bus.origin.ilike(f"%{origin}%"),
+                    Bus.destination.ilike(f"%{destination}%"),
                     Bus.date.between(start_date, end_date)
                 ).all()
             except ValueError:

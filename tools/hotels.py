@@ -9,7 +9,7 @@ def search_hotels(location: str, price_range: Optional[str] = None) -> List[dict
     """
     db = next(get_db())
     try:
-        query = db.query(Hotel).filter(Hotel.location.ilike(location))
+        query = db.query(Hotel).filter(Hotel.location.ilike(f"%{location}%"))
         hotels = query.all()
         
         results = []

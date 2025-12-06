@@ -113,20 +113,38 @@ def generate_schedule(days=45):
 
     return data
 
-def init_db():
-    print("Initializing Database with Dynamic Mock Data...")
+def init_db(force_reseed=False):
+    """
+    Initialize database and seed with mock data.
+    Args:
+        force_reseed: If True, drop all data and reseed. If False, only seed if empty.
+    """
+    print("Initializing Database...")
     
-    # Try to drop tables, ignore if they don't exist
-    try:
-        Base.metadata.drop_all(bind=engine) # CLEAR OLD DATA
-    except Exception as e:
-        print(f"Warning during drop_all: {e}")
-        
+    # Create tables if they don't exist
     Base.metadata.create_all(bind=engine)
     
     session = SessionLocal()
     
-    mock_data = generate_schedule(days=45) # Generate for next 45 days
+    # Check if database already has data
+    existing_flights = session.query(Flight).count()
+    
+    if existing_flights > 0 and not force_reseed:
+        print(f"✅ Database already initialized with {existing_flights} flights. Skipping seed.")
+        session.close()
+        return
+    
+    # If force_reseed or empty database, proceed with seeding
+    if force_reseed:
+        print("Force re-seeding: Dropping existing data...")
+        try:
+            Base.metadata.drop_all(bind=engine)
+            Base.metadata.create_all(bind=engine)
+        except Exception as e:
+            print(f"Warning during drop_all: {e}")
+    
+    print("Generating Dynamic Mock Data...")
+    mock_data = generate_schedule(days=45)  # Generate for next 45 days
     
     # Bulk insert
     print(f"Seeding {len(mock_data['flights'])} flights...")
